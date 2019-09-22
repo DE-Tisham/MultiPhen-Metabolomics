@@ -1,0 +1,7 @@
+strata label rsid SNP pheno1 pheno2 pheno3 pheno4 pheno5 pheno6
+all pval 21_9412126 21_9412126 1.05e-01 1.96e-01 9.39e-01 7.07e-01 8.49e-01 8.91e-01
+all pval 21_9414592 21_9414592 8.67e-01 3.50e-01 3.37e-01 3.98e-01 5.40e-01 7.35e-01
+all pval comb comb 9.90e-14 6.56e-03 1.10e-01 3.45e-01 6.29e-01 8.99e-01
+all beta 21_9412126 21_9412126 -2.80e-01 -2.06e-01 9.96e-03 -5.72e-02 1.74e-02 -1.07e-02
+all beta 21_9414592 21_9414592 -1.19e-02 1.29e-01 -2.14e-01 1.93e-01 -7.68e-02 3.31e-02
+all beta comb comb  NA  NA  NA  NA  NA  NA

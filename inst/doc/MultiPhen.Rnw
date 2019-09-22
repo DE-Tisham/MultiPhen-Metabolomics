@@ -1,0 +1,282 @@
+\documentclass{article}
+% \VignettePackage{MultiPhen}
+% \VignetteIndexEntry{Using MultiPhen for simulation}
+
+\usepackage{graphicx}
+\usepackage[margin=2cm]{geometry}
+\usepackage[colorlinks=true,urlcolor=blue]{hyperref}
+\usepackage{array}
+\usepackage{color}
+\usepackage{underscore}
+%\usepackage[utf8]{inputenc} % for UTF-8/single quotes from sQuote()
+\usepackage{Sweave}
+
+% for bold symbols in mathmode
+\usepackage{bm}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\beq}{\begin{equation}}
+\newcommand{\eeq}{\end{equation}}
+\newcommand{\m}[1]{\mathbf{#1}}
+
+\newcommand{\code}[1]{{{\tt #1}}}
+\title{Using \textit{MultiPhen}: and example with PLINK format data}
+\author{Lachlan Coin and Federico Calboli}
+\date{\today}
+\sloppy
+\hyphenpenalty 10000
+
+\begin{document}
+\SweaveOpts{prefix.string = base, echo=TRUE, eval=TRUE, fig = FALSE, eps = FALSE, pdf = TRUE}
+
+
+\definecolor{Soutput}{rgb}{0,0,0.56}
+\definecolor{Sinput}{rgb}{0.56,0,0}
+\DefineVerbatimEnvironment{Sinput}{Verbatim}
+{formatcom={\color{Sinput}},fontsize=\footnotesize, baselinestretch=0.75}
+\DefineVerbatimEnvironment{Soutput}{Verbatim}
+{formatcom={\color{Soutput}},fontsize=\footnotesize, baselinestretch=0.75}
+
+\color{black}
+
+\maketitle
+
+\section{Introduction}
+This tutorial aims to show the use of the R package \textit{MultiPhen} to analyse genetic data, which has been produced elsewhere and has been transformed in PLINK binary format, one of the most common formats used to store large genetic data.  As mentioned in the vignette detailing the basic usage of \textit{MultiPhen}, this tutorial will show the basic steps in the use of the functions provided by the package in addition to showing how to use \textit{MultiPhen} for data that has been stored in PLINK format. While previous verions of the \textit{MultiPhen} package already had the ability to read in and to analyse genetic data in PLINK format, with version 2.0.0 we have include many enhancements, and we recommend all users, even users who had used \textit{MultiPhen} 1.x.x beofre to read this vignette to get a better understanding of the new functions.  We have tried to maintain back compatibility as much as possible, but we feel that the future of the package will see the most active development to take place for the new fucntions, thus we encourage all users to prefer using them, and to change any legacy script they might have.
+\newline
+\noindent The test data is supplied with the package and is in the same directory where this vignette is.
+
+\subsection{Installation}
+Before going further, we will make sure that \textit{MultiPhen} and all the packages it depends from are installed on the computer.
+Current version of the package is 2.0.0.
+Make sure you have a recent version of R ($\geq 3.0.2$) by typing:
+<<echo=TRUE>>=
+R.version.string
+@
+
+Assuming that is the case (ideally the version of R should be the latest stable version), we can install \textit{MultiPhen} with all its dependencies typing:
+<<eval=FALSE>>=
+install.packages("MultiPhen", dependecies = TRUE)
+@
+
+\noindent We can now load \textit{MultiPhen} by typing:
+<<echo=TRUE>>=
+library(MultiPhen)
+@
+
+
+\section{Usage}
+We start by explaining the way that MultiPhen uses options to customise the analysis run.  MultiPhen has several options, which all have the form "mPhen.xxx", which are grouped in the following categories: "regresssion", "geno.input", "pheno.input", "plot","meta.analysis", "misc".  The following snippet prints out the description of all the options, prints just the 'misc' options, and then sets the mPhen.logp option.  Note that if you use 'Rscript' on the command line to run R, you can also 
+set options in the command line (e.g. Rscript MultiPhen.plink.R --mPhen.logp=FALSE ...).   This option specifies whether the MultiPhen p-values should be calculated and
+reported in log (base 10).
+
+
+<<echo=TRUE>>=
+library(MultiPhen)
+options(width = 60) # for printing this vignette is a reasonably acceptable way
+print(mPhen.options("all",descr = TRUE))
+print(mPhen.options("misc",descr = TRUE))
+options("mPhen.log10p"=FALSE)
+@
+
+
+
+\noindent First, we read the phenotypes from a  phenotype file, for which the first column specifies sample ids, and the first row specifies phenotype names. This requires a set of default options specifying how to read the phenotype input, for example the delimiter between columns, which is tab by default.  Note that a plink style '.fam' file can also be read as a phenotype file, however, a space delimiter should be specified.
+
+<<echo=TRUE>>=
+pheno.opts = mPhen.options("pheno.input")
+pheno = mPhen.readPhenoFiles("pheno.txt", opts = pheno.opts)
+pheno.opts$mPhen.sep.pheno=" "
+pheno.opts$mPhen.numHeaderRows.pheno = 0
+pheno.hapmap = mPhen.readPhenoFiles("hapmap2.fam", opts = pheno.opts)
+@
+
+Note that \textit{pheno} is a list with two elements - the first element is a matrix of phenotype values, and the second is a list which specifies which phenotypes to use as for association, and which to use as covariates, residuals, stratification or exclusion indices.  This second list can be modified as desired.
+
+<<echo=TRUE>>=
+print(names(pheno))
+print(pheno$limit)
+pheno.hapmap$limit$covariates = pheno.hapmap$limit$phenotypes[1]
+pheno.hapmap$limit$phenotypes = pheno.hapmap$limit$phenotypes[-1]
+@
+
+
+
+\noindent The next step is to prepare the phenotype data for association analysis.  This includes carrying out any phenotype transformations, (including potentially orthogonalising the phenotype data) as well as pre-calculating covariance matrices, residual offsets and stratification indices. This step uses options specified in the 'regression' options category.  The \textit{pheno\$limit} is used here to define which are the outcome variables, and which are used as covariates, etc.
+
+<<echo=TRUE>>=
+opts = mPhen.options("regression")
+phenoObject = mPhen.preparePheno(pheno,opts = opts)
+phenoObject.hapmap = mPhen.preparePheno(pheno.hapmap,opts = opts)
+numPhenos = length(phenoObject$phenN)
+numPhenos.hapmap = length(phenoObject.hapmap$phenN)
+@
+
+
+Next, we get the default options for reading in genotypes, and for regression. We modify the mPhen.batch option so that we only read in 100 genotypes at a time.  We also specify the input file, which can be in multiple formats.   The mPhen.format option is used for multi-format input files, such as a vcf or a zip file.  In this case we will specify the 'GT' or genotype format, but we can also specify a 'GL' or genotype-likelihood format.
+
+<<echo=TRUE>>=
+geno.opts = mPhen.options("geno.input")
+opts = mPhen.options("regression")
+geno.opts$mPhen.batch = 100
+geno.opts$mPhen.format = "GT"
+@
+
+\noindent Next, we read genotypes from the file.    Note also that if the data is read in as imputed (supported for .vcf and .zip formats, but not plink format), then the genotype matrix will be 3 dimensional, with the third dimension specifying the probability. Note that in this example we specify the 'indiv' variable when reading in the genotype file.  This will ensure that the genotypes are re-ordered to be in the same order as in the phenotype file.
+Note that as plink input comprises multiple files with the same root name, we just specify the root name.  
+across possible genotypes.  Note that this superseeds the "read.plink" function, which is still in the package for backward compatibility.
+
+<<echo=TRUE>>=
+file = "ALL.chr21.integrated.phase1.v3.20101123.snps.indels.svs.genotypes.extract.zip"
+genoConnection <-mPhen.readGenotypes(file, opts = geno.opts, 
+                                     indiv = rownames(pheno$pheno))
+geno <-genoConnection$genoData  
+dimg = dim(geno)
+file = "hapmap2"
+genoConnection.hapmap <-mPhen.readGenotypes("hapmap2", opts = geno.opts, 
+                                            indiv = rownames(pheno.hapmap$pheno))
+geno.hapmap <-genoConnection.hapmap$genoData  
+@
+
+
+\section{Association}
+
+\noindent.  We first run an inverse regression using the default MultiPhen model using \textit{mPhen.assoc}.  The default options for regression can be viewed by printing the opts object obtained in the previous step. In particular, note that opts\$mPhen.inverseRegress = TRUE; opts\$mPhen.JointModel = TRUE and opts\$mPhen.link.geno = "ordinal". 
+
+<<echo=TRUE>>=
+print(opts)
+resultsJoint = mPhen.assoc(geno, phenoObject,  opts = opts)
+@
+
+\noindent The results include both the calculated minor allele frequency (results\$maf) as well a 4 dimensional array containing the association results (results\$Results).  The first dimension is strata (e.g. male/female/both), the second dimension is snpid, the third dimension is phenotype and the fourth dimension is statistic (i.e. Beta, p-value and Nobs). Note that since the JointModel was specified, the size of the phenotype dimension is equal to numPhenos +1, with the extra column storing 
+the results for the overall model.  Also note that if JointModel is specified, then the single-trait pvalues given are those calculated from t-test within the regression model, and reflect the significance of that variable in the context of all the other variables included in the model.  With many correlated phenotypes, these are often much less significant than single-trait association pvalues.   So, we can identify which snp indices have nominally significant JointModel associations, and print to screen the pvalues of association at those genotypes
+
+<<echo=TRUE>>=
+sigInds = which(resultsJoint$Res[,,numPhenos+1,2]<0.05)
+print(resultsJoint$Res[,sigInds,,2])
+@
+
+\noindent  Next,  we might wish to carry out a variable selection procedure to identify which are the primary phenotypes associated. Note that if the number of snps in geno is large, we might prefer to restrict the analysis to geno[,sigInds,drop=F]. Note the use of drop=F to preserve the dimensions of geno.  We also set opts\$mPhen.link.geno="gaussian" to improve speed of variable selection, but it is also possible to keep the 'ordinal' link.  
+
+<<echo=TRUE>>= 
+opts$mPhen.variable.selection=TRUE
+opts$mPhen.link.geno="gaussian"
+resultsBackwardSelection =mPhen.assoc(geno, 
+                                      phenoObject,  opts=opts)
+#print p-values  
+print(resultsBackwardSelection$Res[,,,2])
+#print betas
+print(resultsBackwardSelection$Res[,,,1])
+@
+
+\noindent Note that of the  pvalues reported here, many are now set to 1.0 (and correspondingly the betas are 0), which indicates that phenotype is not included in the variable selection model. The overall model p-value represents the model p-value only using those variables which are selected (i.e. have single-trait pvalues less than 1.0), and is often more significant that the original model p-value.  However, the process of variable selection does lead to inflation of this smaller model p-value, so it should be  treated with a little caution.
+
+\noindent Next, we calculate standard single-trait association p-values , by setting JointModel = FALSE and inverseRegress = FALSE
+
+
+<<echo=TRUE>>= 
+   opts$mPhen.variable.selection=FALSE
+   opts$mPhen.JointModel=FALSE 
+   opts$mPhen.inverseRegress=FALSE   
+   resultsSingle = mPhen.assoc(geno, phenoObject,  opts)
+@
+
+\noindent  Next, we calculate a joint genotype model (with separate phenotypes) by setting inverseRegress = FALSE, and JointModel=TRUE.  We calculate association statistics
+
+<<echo=TRUE>>= 
+  opts$mPhen.variable.selection=FALSE
+  opts$mPhen.JointModel=TRUE
+  opts$mPhen.inverseRegress = FALSE    
+  resultsJointG = mPhen.assoc(geno, phenoObject,opts)
+@
+
+
+
+\noindent Next we calculate a model which is iteratively Multiple phenotypes and then Multiple genotypes, each time updating a linear combination of either
+phenotypes or genotypes.  This is similar to a canonical correlation analysis.  We use a gaussian link for speed, but an ordinal link would also work.
+
+<<echo=T>>=
+opts$mPhen.link.geno="gaussian"
+resultsCCA =  mPhen.cca(geno, 
+                        phenoObject,opts=opts)
+@
+
+
+\section{Output}
+\noindent We will now save the results of our analyses to different files to have a convenient reference of our work thus far. We can do this using the \textit{mPhen.writeOutput} function.  This function writes results in multiple formats, and also generates multiple plots.  First we need a list of the formats we want to 
+write the results in, as well as a list of the plots to generate, and then we can use this to generate the desired output.  Note that 
+
+<<echo=TRUE>>=
+ resDir = "resultsDir" 
+ towrite = list(long.txt = TRUE,   wide.txt = TRUE)
+ toplot = list(.manh = TRUE,.qq = TRUE,.heatm = TRUE,
+               .fprint = TRUE)
+ plotopts = mPhen.options("plot")
+ output=mPhen.writeOutput(resultsJoint,output=resDir, 
+                          geno = geno, towrite = towrite, 
+                          toplot = toplot, opts = plotopts)
+@
+
+The output of \textit{mPhen.writeOutput} is an object which can be then used to write subsequent results.  This is particularly useful if you are
+running the genetic analyses in multiple batches, in which case the results will be appended to the same file.  Also note that the plots are not produced until the final batch has been read (which is indicated in attr(geno,"closeConnection")).  
+<<echo=TRUE>>=
+ output=mPhen.writeOutput(resultsBackwardSelection,output=output, 
+                          geno = geno, towrite = towrite, 
+                          toplot = toplot,     opts = plotopts)
+ output=mPhen.writeOutput(resultsSingle,output=resDir, geno = geno, 
+                          towrite = towrite, toplot = toplot, 
+                          opts = plotopts)
+ output=mPhen.writeOutput(resultsJointG,output=output,
+                          geno = geno, towrite = towrite,
+                          toplot = toplot,     opts = plotopts)
+@
+
+\noindent  Note that each object \textit{resultsSingle, resultsJoint, ...} produces separate results files, which have as a prefix the name of each object respectively.
+
+
+\section{Simulation}
+
+This section describes how you can use MultiPhen simulate phenotype data with a given correlation structure and a genetic association in a particular direction in phenotype space.  The first step is to calculate a covariance matrix.  This is specified by specifying desired orthogonality between phenotypes.  We specify orthogonality within and between phenotype 'blocks'.  The idea is that phenotypes within blocks will be more correlated than phenotypes within different blocks.  We specify how many phenotypes are within each block, using \textit{blockSize}, which must be an integer divisor \textit{numPhenos}.  We then specify how orthogonal phenotypes should be between and within blocks respectively.
+
+<<echo=TRUE>>=
+blockSize = 2 ## size of each block for partitioning correlation
+orthogAll = c(0.9,0.5) ## parameters controlling 
+## how 'orthogonal' phenotypes are to each other.  
+## First entry is orthogonality between blocks, and 
+## second is orthoganility within blocks
+#parameters must in interval (0,1), with closer to 1 indicating more orthogonal
+ covar = mPhen.sampleCovar(numPhenos,blockSize,orthogAll = orthogAll)
+@
+
+\noindent We use this covariance structure to simulate phenotypes.  We have to also specify the effect direction (effDir) in phenotype space, the proportion of phenotypic variance explained in this direction; and also the genetic effect, which we calculate based on specifying which  snps from the genotype matrix are associated and the relative size of their effects.  Lastly, we can visualise that this gives the desired correlation and association structure using the \textit{mPhen.plotCorrelation} function. Note, that this simulation does not work for imputed data (i.e. if (length(dim(geno))==3)
+
+<<echo=TRUE>>=
+  effDir = c(1,1,0,0,0,0)
+  total.variance.explained = 0.1  ## total variance explained by all snps.
+
+  snpIndices <- c(1,2)  
+  betag = c(1,0.5)
+  genoEffect = geno[,snpIndices,drop=F] %*% (betag/(betag %*% betag))
+
+  pheno.sim = mPhen.simulate(genoEffect,dimnames(geno)[[1]], covar,effDir,
+			     total.variance.explained, inverse=FALSE, 
+           effDirInReverseEigenspace = FALSE)
+  mPhen.plotCorrelation(pheno.sim$pheno[,which(pheno.sim$effDir!=0),
+                        drop=F],geno[,snpIndices,drop=F],cex=0.5)
+@
+
+\noindent This phenotype can then be used in place of \textit{pheno} above in the association analyses.
+
+<<echo=TRUE>>=
+phenoObjectSim = mPhen.preparePheno(pheno.sim,opts = opts)
+opts = mPhen.options("regression")
+resultsJointSim = mPhen.assoc(geno, phenoObjectSim,  opts = opts)
+@
+
+\end{document}
+
+
+
+
+
+
